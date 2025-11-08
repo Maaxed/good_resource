@@ -1,0 +1,10 @@
+{
+	overworld: World(
+		mobs: [slime],
+		neighbor_worlds: [],
+	),
+	nether: World(
+		mobs: [slime],
+		neighbor_worlds: [],
+	),
+}
