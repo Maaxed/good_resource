@@ -1,5 +1,7 @@
 pub mod registry;
 pub mod serde;
+#[cfg(feature = "notify")]
+pub mod notify;
 
 
 use std::any::TypeId;
@@ -19,12 +21,21 @@ pub trait ResourceKeyMap: Copy
 	fn get_key_untyped(self, id: &str, type_id: TypeId) -> Option<UntypedKey>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResourcePathKind
+{
+	File,
+	Directory,
+	RecursiveDirectory,
+}
 
 pub trait ResourceDef: Sized
 {
 	type Error: Debug;
 	type KeyMap: ResourceKeyMap;
 	type ValueMap;
+
+	fn visit_resource_paths<E>(&self, visitor: impl FnMut(&std::path::Path, ResourcePathKind) -> Result<(), E>) -> Result<(), E>;
 
 	fn load_keys(self) -> Result<(Self::KeyMap, Self::ValueMap), Self::Error>;
 
@@ -68,14 +79,22 @@ macro_rules! impl_resource_def_tuple
 {
 	($(($i:tt, $T:ident, $k:ident, $v:ident)),*) =>
 	{
-		impl<E, $($T,)*> ResourceDef for ($($T,)*)
+		impl<Err, $($T,)*> ResourceDef for ($($T,)*)
 		where
-			E: Debug,
-			$($T: ResourceDef<Error = E>,)*
+			Err: Debug,
+			$($T: ResourceDef<Error = Err>,)*
 		{
-			type Error = E;
+			type Error = Err;
 			type KeyMap = ($($T::KeyMap,)*);
 			type ValueMap = ($($T::ValueMap,)*);
+
+			fn visit_resource_paths<E>(&self, mut visitor: impl FnMut(&std::path::Path, ResourcePathKind) -> Result<(), E>) -> Result<(), E>
+			{
+				$(
+					self.$i.visit_resource_paths(&mut visitor)?;
+				)*
+				Ok(())
+			}
 
 			fn load_keys(self) -> Result<(Self::KeyMap, Self::ValueMap), Self::Error>
 			{

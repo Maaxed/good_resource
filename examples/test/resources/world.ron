@@ -4,7 +4,7 @@
 		neighbor_worlds: [],
 	),
 	nether: World(
-		mobs: [slime],
-		neighbor_worlds: [],
+		mobs: [slime, skeleton],
+		neighbor_worlds: [overworld],
 	),
 }

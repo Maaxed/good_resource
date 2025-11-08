@@ -13,7 +13,7 @@ use serde::de::{RegistryKeyMapSeed, RegistryValueMapSeed};
 use ::serde::de::DeserializeOwned;
 
 use crate::serde::DeserializerFactory;
-use crate::{ResourceDef, ResourceKeyMap};
+use crate::{ResourceDef, ResourceKeyMap, ResourcePathKind};
 
 #[derive_where(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Key<T>
@@ -254,14 +254,30 @@ impl<T> Registry<T>
 		self.key_to_entry.iter_mut().enumerate().map(|(i, entry)| entry.as_mut(Key::new(i)))
 	}
 
-	pub fn loading_from_file<'l, F: DeserializerFactory>(&'l mut self, path: &'l Path, factory: F) -> FromFile<'l, T, F>
+	pub fn file_def<'l, P, F>(&'l mut self, file_path: &'l P, factory: F) -> RegistryFileDef<'l, T, F>
+	where
+		P: AsRef<Path> + ?Sized,
+		F: DeserializerFactory,
 	{
-		FromFile(path, self, factory)
+		RegistryFileDef
+		{
+			file_path: file_path.as_ref(),
+			registry: self,
+			factory,
+		}
 	}
 
-	pub fn loading_from_folder<'l, F: DeserializerFactory>(&'l mut self, path: &'l Path, factory: F) -> FromFolder<'l, T, F>
+	pub fn dir_def<'l, P, F>(&'l mut self, dir_path: &'l P, factory: F) -> RegistryDirectoryDef<'l, T, F>
+	where
+		P: AsRef<Path> + ?Sized,
+		F: DeserializerFactory,
 	{
-		FromFolder(path, self, factory)
+		RegistryDirectoryDef
+		{
+			dir_path: dir_path.as_ref(),
+			registry: self,
+			factory,
+		}
 	}
 }
 
@@ -352,9 +368,14 @@ impl<D> From<std::io::Error> for RegistryDeserializeError<D>
 
 
 #[derive(Debug)]
-pub struct FromFile<'l, T, F>(&'l Path, &'l mut Registry<T>, F);
+pub struct RegistryFileDef<'l, T, F>
+{
+	file_path: &'l Path,
+	registry: &'l mut Registry<T>,
+	factory: F,
+}
 
-impl<'l, T, F> ResourceDef for FromFile<'l, T, F>
+impl<'l, T, F> ResourceDef for RegistryFileDef<'l, T, F>
 where
 	T: DeserializeOwned + 'static,
 	F: DeserializerFactory,
@@ -363,17 +384,22 @@ where
 	type KeyMap = &'l RegistryKeyMap<T>;
 	type ValueMap = (&'l Path, &'l RegistryKeyMap<T>, &'l mut RegistryValueMap<T>, F);
 
+	fn visit_resource_paths<E>(&self, mut visitor: impl FnMut(&std::path::Path, ResourcePathKind) -> Result<(), E>) -> Result<(), E>
+	{
+		visitor(self.file_path, ResourcePathKind::File)
+	}
+
 	fn load_keys(mut self) -> Result<(Self::KeyMap, Self::ValueMap), Self::Error>
 	{
-		let mut file = File::open(self.0)?;
+		let mut file = File::open(self.file_path)?;
 
-		self.1.yeet_all();
+		self.registry.yeet_all();
 		
-		self.2.deserialize_from_file(&mut file, RegistryKeyMapSeed(self.1)).map_err(RegistryDeserializeError::Deserialize)?;
+		self.factory.deserialize_from_file(&mut file, RegistryKeyMapSeed(self.registry)).map_err(RegistryDeserializeError::Deserialize)?;
 
 		Ok((
-			&self.1.id_to_key,
-			(self.0, &self.1.id_to_key, &mut self.1.key_to_entry, self.2),
+			&self.registry.id_to_key,
+			(self.file_path, &self.registry.id_to_key, &mut self.registry.key_to_entry, self.factory),
 		))
 	}
 
@@ -392,12 +418,17 @@ where
 
 
 
-/// Read each file in a folder as a registry entry.
+/// Read each file in a directory as a registry entry.
 /// The name of the file is the id of the entry.
 #[derive(Debug)]
-pub struct FromFolder<'l, T, F>(&'l Path, &'l mut Registry<T>, F);
+pub struct RegistryDirectoryDef<'l, T, F>
+{
+	dir_path: &'l Path,
+	registry: &'l mut Registry<T>,
+	factory: F,
+}
 
-impl<'l, T, F> FromFolder<'l, T, F>
+impl<'l, T, F> RegistryDirectoryDef<'l, T, F>
 where
 	F: DeserializerFactory,
 {
@@ -423,7 +454,7 @@ where
 	}
 }
 
-impl<'l, T, F> ResourceDef for FromFolder<'l, T, F>
+impl<'l, T, F> ResourceDef for RegistryDirectoryDef<'l, T, F>
 where
 	T: DeserializeOwned + 'static,
 	F: DeserializerFactory,
@@ -432,11 +463,16 @@ where
 	type KeyMap = &'l RegistryKeyMap<T>;
 	type ValueMap = (&'l Path, &'l RegistryKeyMap<T>, &'l mut RegistryValueMap<T>, F);
 
+	fn visit_resource_paths<E>(&self, mut visitor: impl FnMut(&std::path::Path, ResourcePathKind) -> Result<(), E>) -> Result<(), E>
+	{
+		visitor(self.dir_path, ResourcePathKind::Directory)
+	}
+
 	fn load_keys(self) -> Result<(Self::KeyMap, Self::ValueMap), Self::Error>
 	{
-		let entries = std::fs::read_dir(self.0)?;
+		let entries = std::fs::read_dir(self.dir_path)?;
 
-		self.1.yeet_all();
+		self.registry.yeet_all();
 
 		for entry in entries
 		{
@@ -448,12 +484,12 @@ where
 				continue;
 			};
 
-			self.1.get_or_insert_key(file_name.to_owned());
+			self.registry.get_or_insert_key(file_name.to_owned());
 		}
 
 		Ok((
-			&self.1.id_to_key,
-			(self.0, &self.1.id_to_key, &mut self.1.key_to_entry, self.2),
+			&self.registry.id_to_key,
+			(self.dir_path, &self.registry.id_to_key, &mut self.registry.key_to_entry, self.factory),
 		))
 	}
 

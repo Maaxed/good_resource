@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::time::Duration;
 
-use good_ressource::ResourceDef;
-use good_ressource::registry::{Key, Registry};
+use good_resource::ResourceDef;
+use good_resource::notify::NotifyReloader;
+use good_resource::registry::{Key, Registry};
 use ron::Options;
 use serde::Deserialize;
 
@@ -33,8 +34,8 @@ impl Resources
 	fn resource_def(&mut self) -> impl ResourceDef
 	{
 		(
-			self.mobs.loading_from_folder(Path::new("examples/test/resources/mob"), Options::default()),
-			self.worlds.loading_from_file(Path::new("examples/test/resources/world.ron"), Options::default()),
+			self.mobs.dir_def("examples/test/resources/mob", Options::default()),
+			self.worlds.file_def("examples/test/resources/world.ron", Options::default()),
 		)
 	}
 }
@@ -44,5 +45,17 @@ fn main()
 	let mut resources = Resources::default();
 	resources.resource_def().load().unwrap();
 
-	dbg!(resources);
+	dbg!(&resources);
+
+	let mut reloaded = NotifyReloader::new(&resources.resource_def()).unwrap();
+
+	loop
+	{
+		std::thread::sleep(Duration::from_secs_f32(0.5));
+
+		if reloaded.check_for_reload(resources.resource_def()).unwrap()
+		{
+			dbg!(&resources);
+		}
+	}
 }
