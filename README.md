@@ -1,6 +1,7 @@
 # good_resource
 
-A small rust library for loading data from files designed for games
+A small rust library for loading data from files designed for games  
+**This library is very experimental, expect breaking changes!**
 
 ## Features
 
